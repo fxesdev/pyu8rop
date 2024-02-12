@@ -32,8 +32,8 @@ pg_name = 'PyU8ROP'  # program name here
 username = 'fxesdev'  # GitHub username here
 repo_name = 'pyu8rop'  # GitHub repository name here
 
-version = '0.0.2'  # displayed version (e.g. 1.0.0 Prerelease - must match GH release title)
-internal_version = 'v0.0.2'  # internal version (must match GitHub release tag)
+version = '0.0.2_01'  # displayed version (e.g. 1.0.0 Prerelease - must match GH release title)
+internal_version = 'v0.0.2_01'  # internal version (must match GitHub release tag)
 prerelease = False  # prerelease flag (must match GitHub release's prerelease flag)
 
 
@@ -193,15 +193,16 @@ Do you want to continue?\
 
 	def open(self):
 		f = tk.filedialog.askopenfile(mode = 'rb', filetypes = [('All Files', '*.*'), ('Binary Files', '*.bin')], defaultextension = '.bin')
-		bytecode = f.read()
-		string = ''
-		for i in range(0, len(bytecode), 4):
-			data = bytecode[i:i+4]
-			string += ' '.join([f'{c:02X}' for c in data]) + '\n'
+		if f is not None:
+			bytecode = f.read()
+			string = ''
+			for i in range(0, len(bytecode), 4):
+				data = bytecode[i:i+4]
+				string += ' '.join([f'{c:02X}' for c in data]) + '\n'
 
-		self.hex.delete('1.0', 'end')
-		self.hex.insert('end', string[:-1])
-		self.translate_hex()
+			self.hex.delete('1.0', 'end')
+			self.hex.insert('end', string[:-1])
+			self.translate_hex()
 
 	def auto_update(self):
 		self.update_thread = ThreadWithResult(target=self.UpdaterGUI.updater.check_updates, args=(True,))
@@ -314,8 +315,8 @@ Do you want to continue?\
 
 		self.window.geometry(f'{self.display_w}x{self.display_h}')
 		self.window.bind('<F12>', self.version_details)
-		self.window.bind('<Control-O>', lambda x: self.open)
-		self.window.bind('<Control-o>', lambda x: self.open)
+		self.window.bind('<Control-O>', lambda x: self.open())
+		self.window.bind('<Control-o>', lambda x: self.open())
 		self.window.option_add('*tearOff', False)
 		self.set_title()
 		# TODO: uncomment this when you actually have an icon.ico/xbm file
