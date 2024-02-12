@@ -11,6 +11,7 @@ import tkinter as tk
 import tkinter.ttk as ttk
 import tkinter.font
 import tkinter.messagebox
+import tkinter.filedialog
 
 # for PyInstaller binaries
 try:
@@ -31,8 +32,8 @@ pg_name = 'PyU8ROP'  # program name here
 username = 'fxesdev'  # GitHub username here
 repo_name = 'pyu8rop'  # GitHub repository name here
 
-version = '0.0.1'  # displayed version (e.g. 1.0.0 Prerelease - must match GH release title)
-internal_version = 'v0.0.1'  # internal version (must match GitHub release tag)
+version = '0.0.2'  # displayed version (e.g. 1.0.0 Prerelease - must match GH release title)
+internal_version = 'v0.0.2'  # internal version (must match GitHub release tag)
 prerelease = False  # prerelease flag (must match GitHub release's prerelease flag)
 
 
@@ -168,27 +169,39 @@ Do you want to continue?\
 		self.main()
 
 	def update_hex(self, event):
-		content = event.widget.get(1.0, 'end-1c')
+		content = event.widget.get('1.0', 'end-1c')
 		if event.char.lower() not in '\x080123456789abcdef': return 'break'
 		elif event.char == '\x08' and len(content) > 1: event.widget.delete(f'end-{1 + (content[-2] == " ")}c', 'end')
 		else:
-			if len(content) > 1 and ' ' not in content[-2:]: event.widget.insert('end', ' ')
+			if len(content) > 1 and ' ' not in content[-2:] and '\n' not in content[-2:]: event.widget.insert('end', ' ' if len(content.replace('\n', '')) % 11 else '\n')
 			if event.char.lower() in 'abcdef':
 				event.widget.insert('end', event.char.upper())
 				return 'break'
 
-	def translate_hex(self, event):
+	def translate_hex(self, event = None):
 		string = ''
-		content = event.widget.get(1.0, 'end-1c').replace(' ', '').replace('\n', '')
+		content = self.hex.get(1.0, 'end-1c').replace(' ', '').replace('\n', '')
 		if len(content) > 0:
 			if len(content) % 2 != 0: content = content[:-1] + '0' + content[-1]
 			bytecode = bytes.fromhex(content)
 			for i in range(0, len(bytecode), 4):
 				data = bytecode[i:i+4].ljust(4, b'\0')
-				string += f'{data[2] & 0xf:X}:{data[1] & 0xff:02X}{data[0] & 0xfe:02X}H\n'
+				addr = ((data[2] & 0xf) << 16) + ((data[1] & 0xff) << 8) + (data[0] & 0xff)
+				string += f'{addr >> 16:X}:{addr & 0xfffe:04X}H\n'
 
 		self.write_ro(self.decode, string)
 
+	def open(self):
+		f = tk.filedialog.askopenfile(mode = 'rb', filetypes = [('All Files', '*.*'), ('Binary Files', '*.bin')], defaultextension = '.bin')
+		bytecode = f.read()
+		string = ''
+		for i in range(0, len(bytecode), 4):
+			data = bytecode[i:i+4]
+			string += ' '.join([f'{c:02X}' for c in data]) + '\n'
+
+		self.hex.delete('1.0', 'end')
+		self.hex.insert('end', string[:-1])
+		self.translate_hex()
 
 	def auto_update(self):
 		self.update_thread = ThreadWithResult(target=self.UpdaterGUI.updater.check_updates, args=(True,))
@@ -301,6 +314,8 @@ Do you want to continue?\
 
 		self.window.geometry(f'{self.display_w}x{self.display_h}')
 		self.window.bind('<F12>', self.version_details)
+		self.window.bind('<Control-O>', lambda x: self.open)
+		self.window.bind('<Control-o>', lambda x: self.open)
 		self.window.option_add('*tearOff', False)
 		self.set_title()
 		# TODO: uncomment this when you actually have an icon.ico/xbm file
@@ -395,10 +410,12 @@ Architecture: {platform.machine()}{dnl + "Settings file is saved to working dire
 		menubar = tk.Menu()
 
 		file_menu = tk.Menu(menubar)
-		file_menu.add_command(label = 'New', accelerator = 'Ctrl+N')
-		file_menu.add_command(label = 'Open...', accelerator = 'Ctrl+O')
-		file_menu.add_command(label = 'Save', accelerator = 'Ctrl+S')
-		file_menu.add_command(label = 'Save as...', accelerator = 'Ctrl+Shift+S')
+		file_menu.add_command(label = 'New', accelerator = 'Ctrl+N', state = 'disabled')
+		file_menu.add_command(label = 'Open...', accelerator = 'Ctrl+O', command = self.open)
+		file_menu.add_command(label = 'Save', accelerator = 'Ctrl+S', state = 'disabled')
+		file_menu.add_command(label = 'Save as...', accelerator = 'Ctrl+Shift+S', state = 'disabled')
+		file_menu.add_separator()
+		file_menu.add_command(label = 'Load ROM', accelerator = 'Ctrl+L', state = 'disabled')
 		file_menu.add_separator()
 		file_menu.add_command(label = 'Exit', command = self.quit)
 		menubar.add_cascade(label='File', menu=file_menu)
@@ -529,11 +546,13 @@ Also, you should check out the [Steveyboi/GWE Discord server](https://gamingwith
 		update_info = self.update_thread.result
 
 		if update_info['error']:
-			if update_info['exceeded']:
+			if 'exceeded' in update_info and update_info['exceeded']:
 				self.draw_msg('GitHub API rate limit exceeded! Please try again later.')
-			elif update_info['nowifi']:
+			elif 'nowifi' in update_info and update_info['nowifi']:
 				self.draw_msg(
 					'Unable to connect to the internet. Please try again\nwhen you have a stable internet connection.')
+			elif 'prerelease' in update_info and update_info['prerelease']:
+				self.draw_msg('Cannot get the latest release. Try enabling "Check for\npre-release versions" in Settings.')
 			else:
 				self.draw_msg('Unable to check for updates! Please try again later.')
 		elif update_info['newupdate']:
@@ -637,7 +656,10 @@ class Updater:
 				r = urllib.request.urlopen(url)
 				success = True
 				break
-			except Exception:
+			except urllib.error.HTTPError as e:
+				r = e.fp
+				success = True
+			except urllib.error.URLError as e:
 				if not testing:
 					if not self.check_internet():
 						return
@@ -728,7 +750,7 @@ class Updater:
 							'exceeded': True
 						}
 					else:
-						return {'newupdate': False, 'error': False}
+						return {'newupdate': False, 'error': True, 'prerelease': True}
 				except Exception:
 					pass
 				if response['tag_name'] != internal_version and response['published_at'] > currvertime:
