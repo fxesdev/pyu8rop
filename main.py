@@ -4,7 +4,7 @@ import platform
 import traceback
 import tkinter.messagebox
 
-python_requirement = (3, 6, 0)
+python_requirement = (3, 6, 0, 'alpha', 6)
 if sys.version_info < python_requirement:
 	print('Oops! Your Python version is too old.\n')
 	print(f'Requirement: Python {".".join(map(str, python_requirement))}\nYou have   : Python {platform.python_version()}')

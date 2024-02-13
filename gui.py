@@ -32,8 +32,8 @@ pg_name = 'PyU8ROP'  # program name here
 username = 'fxesdev'  # GitHub username here
 repo_name = 'pyu8rop'  # GitHub repository name here
 
-version = '0.0.2_01'  # displayed version (e.g. 1.0.0 Prerelease - must match GH release title)
-internal_version = 'v0.0.2_01'  # internal version (must match GitHub release tag)
+version = '0.1.0'  # displayed version (e.g. 1.0.0 Prerelease - must match GH release title)
+internal_version = 'v0.1.0'  # internal version (must match GitHub release tag)
 prerelease = False  # prerelease flag (must match GitHub release's prerelease flag)
 
 
@@ -88,6 +88,8 @@ class GUI:
 		self.init_window()
 		self.init_protocols()
 
+		self.gadgets = {}
+
 		# updater settings
 		self.auto_check_updates = tk.BooleanVar()
 		self.auto_check_updates.set(True)
@@ -128,12 +130,6 @@ Do you want to continue?\
 
 		self.menubar()
 
-	def write_ro(self, obj, text):
-		obj['state'] = 'normal'
-		obj.delete('1.0', 'end')
-		obj.insert('end', text)
-		obj['state'] = 'disabled'
-
 	def start_main(self):
 		"""
 		Runs necessary commands before calling the main function.
@@ -148,61 +144,63 @@ Do you want to continue?\
 		else:
 			self.updates_checked = True
 
-		ttk.Label(text = 'Hex form').pack(anchor = 'nw')
-		hexframe = tk.Frame()
-		self.hex = tk.Text(hexframe, height = 17)
-		self.hex.bind('<KeyPress>', self.update_hex)
-		self.hex.bind('<KeyRelease>', self.translate_hex)
-		hexsb = ttk.Scrollbar(hexframe, command = self.hex.yview); self.hex['yscrollcommand'] = hexsb.set
-		hexsb.pack(side = 'right', fill = 'y')
-		self.hex.pack(side = 'left', fill = 'both', expand = True)
-		hexframe.pack(fill = 'x')
+		ttk.Label(text = 'Gadget list\n', font = self.bold_font).pack()
 
-		decodeframe = tk.Frame()
-		self.decode = tk.Text(decodeframe, height = 17, state = 'disabled')
-		decodesb = ttk.Scrollbar(decodeframe, command = self.decode.yview); self.decode['yscrollcommand'] = decodesb.set
-		decodesb.pack(side = 'right', fill = 'y')
-		self.decode.pack(side = 'left', fill = 'both', expand = True)
-		decodeframe.pack(side = 'bottom', fill = 'x')
-		ttk.Label(text = 'Translated').pack(side = 'bottom', anchor = 'sw')
+		buttonframe = FocusFrame()
+		ttk.Button(buttonframe, text = 'Add gadget', command = self.add_gadget).pack(side = 'left')
+		self.clearbutton = ttk.Button(buttonframe, text = 'Delete all gadgets', command = self.clear_all, state = 'disabled'); self.clearbutton.pack(side = 'left')
+		buttonframe.pack()
+
+		self.gadgetframe = VerticalScrolledFrame(self.window)
+		self.gadgetframe.pack(fill = 'both', expand = True)
 
 		self.main()
 
-	def update_hex(self, event):
-		content = event.widget.get('1.0', 'end-1c')
-		if event.char.lower() not in '\x080123456789abcdef': return 'break'
-		elif event.char == '\x08' and len(content) > 1: event.widget.delete(f'end-{1 + (content[-2] == " ")}c', 'end')
+	def add_gadget(self, type_ = 'address', data = None):
+		if type_ == 'address': wclass = Address
+		#elif type_ == 'pop': wclass = Pop
 		else:
-			if len(content) > 1 and ' ' not in content[-2:] and '\n' not in content[-2:]: event.widget.insert('end', ' ' if len(content.replace('\n', '')) % 11 else '\n')
-			if event.char.lower() in 'abcdef':
-				event.widget.insert('end', event.char.upper())
-				return 'break'
+			self.n_a()
+			return
 
-	def translate_hex(self, event = None):
-		string = ''
-		content = self.hex.get(1.0, 'end-1c').replace(' ', '').replace('\n', '')
-		if len(content) > 0:
-			if len(content) % 2 != 0: content = content[:-1] + '0' + content[-1]
-			bytecode = bytes.fromhex(content)
-			for i in range(0, len(bytecode), 4):
-				data = bytecode[i:i+4].ljust(4, b'\0')
-				addr = ((data[2] & 0xf) << 16) + ((data[1] & 0xff) << 8) + (data[0] & 0xff)
-				string += f'{addr >> 16:X}:{addr & 0xfffe:04X}H\n'
+		idx = max(self.gadgets) + 1 if len(self.gadgets) > 0 else 0
+		if len(self.gadgets) == 0: self.clearbutton['state'] = 'normal'
 
-		self.write_ro(self.decode, string)
+		widget = wclass(self.gadgetframe.interior, self, idx, data)
+		self.gadgets[idx] = {'type': type_, 'data': data, 'widget': widget}
+		widget.pack(fill = 'x')
+
+	def clear_all(self):
+		if tk.messagebox.askyesno('Warning', 'Are you sure you want to delete all gadgets?', icon = 'warning'):
+			for j in [i['widget'] for i in self.gadgets.values()]: j.destroy()
+
+	@staticmethod
+	def validate_hex(new_char, new_str, act_code, rang = None, spaces = False):
+		act_code = int(act_code)
+		if rang: rang = eval(rang)
+		
+		if act_code == 1:
+			try: new_value_int = int(new_char, 16)
+			except ValueError:
+				if len(new_char) == 1:
+					if new_char != ' ': return False
+					elif not spaces: return False
+				else:
+					try: new_value_int = int(new_char.replace(' ', ''), 16)
+					except ValueError: return False
+			if rang:
+				if len(new_str) > len(hex(rang[-1])[2:]): return False
+				elif len(new_str) == len(hex(rang[-1])[2:]) and int(new_str, 16) not in rang: return False
+
+		return True
 
 	def open(self):
 		f = tk.filedialog.askopenfile(mode = 'rb', filetypes = [('All Files', '*.*'), ('Binary Files', '*.bin')], defaultextension = '.bin')
 		if f is not None:
 			bytecode = f.read()
-			string = ''
 			for i in range(0, len(bytecode), 4):
-				data = bytecode[i:i+4]
-				string += ' '.join([f'{c:02X}' for c in data]) + '\n'
-
-			self.hex.delete('1.0', 'end')
-			self.hex.insert('end', string[:-1])
-			self.translate_hex()
+				data = int.from_bytes(bytecode[i:i+4], 'little')
+				self.add_gadget(data = data & 0xffffe)
 
 	def auto_update(self):
 		self.update_thread = ThreadWithResult(target=self.UpdaterGUI.updater.check_updates, args=(True,))
@@ -314,6 +312,7 @@ Do you want to continue?\
 		"""
 
 		self.window.geometry(f'{self.display_w}x{self.display_h}')
+		self.window.resizable(False, False)
 		self.window.bind('<F12>', self.version_details)
 		self.window.bind('<Control-O>', lambda x: self.open())
 		self.window.bind('<Control-o>', lambda x: self.open())
@@ -357,7 +356,6 @@ Do you want to continue?\
 	def about_menu():
 		"""
 		Shows basic information about the version, system and architecture, as well as the license of the project.
-		NOTE: LICENSE CANNOT BE CHANGED, AS PER THE CONDITIONS OF THE GNU GPL-V3 LICENSE.
 		"""
 
 		nl = '\n'
@@ -375,7 +373,6 @@ Licensed under the GNU GPL-v3 license
 		"""
 		Shows technical information about the Python installation and operating system.
 		By default, it can be triggered via the F12 key.
-		Note: DO NOT REMOVE THE event ARGUMENT!
 		"""
 
 		if self.debug:
@@ -455,13 +452,8 @@ Architecture: {platform.machine()}{dnl + "Settings file is saved to working dire
 		Where the mainloop is called.
 		"""
 
-		self.write_ro(self.decode, '===== EXPERIMENTAL VERSION =====')
-
-		self.set_title()
+		self.set_title('Experimental version')
 		self.window.mainloop()
-
-
-# TODO: add some other classes here
 
 
 class UpdaterGUI:
@@ -813,6 +805,55 @@ class Updater:
 				'nowifi': False
 			}
 
+# https://stackoverflow.com/a/24072653
+class FocusFrame(tk.Frame):
+	def __init__(self, *args, **kwargs):
+		tk.Frame.__init__(self, *args, **kwargs)
+		self.bind('<1>', lambda event: self.focus_set())
+
+class Address(FocusFrame):
+	def __init__(self, master, gui, index, data, **kw):
+		tk.Frame.__init__(self, master, **kw)
+		self.gui = gui
+		self.index = index
+
+		ttk.Label(self, text = 'Address').pack(side = 'left')
+
+		ttk.Button(self, text = 'X', width = 2, command = self.destroy_confirm).pack(side = 'right')
+		ttk.Label(self, text = 'H   ').pack(side = 'right')
+
+		vcmd = self.register(self.gui.validate_hex)
+
+		self.pc = ttk.Entry(self, width = 6, justify = 'right', validate = 'key', validatecommand = (vcmd, '%S', '%P', '%d', range(0, 0x10000, 2)))
+		if data is not None: self.pc.insert(0, f'{data & 0xfffe:04X}')
+		self.pc.bind('<KeyPress>', self.cap_input)
+		self.pc.pack(side = 'right')
+
+		ttk.Label(self, text = ':').pack(side = 'right')
+
+		self.csr = ttk.Entry(self, width = 2, justify = 'right', validate = 'key', validatecommand = (vcmd, '%S', '%P', '%d', range(0x10)))
+		if data is not None: self.csr.insert(0, f'{(data >> 16) & 0xf:X}')
+		self.csr.bind('<KeyPress>', self.cap_input)
+		self.csr.pack(side = 'right')
+
+		self.bind('<FocusOut>', self.pad)
+
+	def cap_input(self, event):
+		if event.char.lower() in '0123456789abcdef':
+			event.widget.insert('end', event.char.upper())
+			return 'break'
+
+	def pad(self, event):
+		self.pc.insert(0, '0'*(4-len(self.pc.get())))
+		if len(self.csr.get()) == 0: self.csr.insert(0, '0')
+
+	def destroy_confirm(self):
+		if tk.messagebox.askyesno('Warning', 'Are you sure you want to delete this gadget?', icon = 'warning'): self.destroy()
+
+	def destroy(self):
+		del self.gui.gadgets[self.index]
+		if len(self.gui.gadgets) == 0: self.gui.clearbutton['state'] = 'disabled'
+		super().destroy()
 
 # https://stackoverflow.com/a/65447493
 class ThreadWithResult(threading.Thread):
@@ -823,3 +864,33 @@ class ThreadWithResult(threading.Thread):
 		def function(): self.result = target(*args, **kwargs)
 
 		super().__init__(group=group, target=function, name=name, daemon=daemon)
+
+# https://stackoverflow.com/a/16198198
+class VerticalScrolledFrame(FocusFrame):
+	def __init__(self, parent, *args, **kw):
+		tk.Frame.__init__(self, parent, *args, **kw)
+
+		vscrollbar = tk.Scrollbar(self, orient = 'vertical')
+		vscrollbar.pack(fill = 'y', side = 'right')
+		canvas = tk.Canvas(self, bd = 0, highlightthickness = 0, yscrollcommand = vscrollbar.set)
+		canvas.pack(side = 'left', fill = 'both', expand = True)
+		vscrollbar.config(command = canvas.yview)
+
+		canvas.xview_moveto(0)
+		canvas.yview_moveto(0)
+
+		self.interior = interior = tk.Frame(canvas)
+		interior_id = canvas.create_window(0, 0, window = interior, anchor = 'nw')
+
+		def _configure_interior(event):
+			size = (interior.winfo_reqwidth(), interior.winfo_reqheight())
+			canvas.config(scrollregion = '0 0 %s %s' % size)
+			if interior.winfo_reqwidth() != canvas.winfo_width():
+				canvas.config(width=interior.winfo_reqwidth())
+		interior.bind('<Configure>', _configure_interior)
+
+		def _configure_canvas(event):
+			if interior.winfo_reqwidth() != canvas.winfo_width():
+				canvas.itemconfigure(interior_id, width=canvas.winfo_width())
+		canvas.bind('<Configure>', _configure_canvas)
+
