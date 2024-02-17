@@ -19,7 +19,7 @@ try:
 except AttributeError:
 	temp_path = os.getcwd()
 
-# TODO: add more main modules here
+import re
 import json
 import urllib.request
 import threading
@@ -32,8 +32,8 @@ pg_name = 'PyU8ROP'  # program name here
 username = 'fxesdev'  # GitHub username here
 repo_name = 'pyu8rop'  # GitHub repository name here
 
-version = '0.1.0'  # displayed version (e.g. 1.0.0 Prerelease - must match GH release title)
-internal_version = 'v0.1.0'  # internal version (must match GitHub release tag)
+version = '0.2.0'  # displayed version (e.g. 1.0.0 Prerelease - must match GH release title)
+internal_version = 'v0.2.0'  # internal version (must match GitHub release tag)
 prerelease = False  # prerelease flag (must match GitHub release's prerelease flag)
 
 
@@ -90,6 +90,9 @@ class GUI:
 
 		self.gadgets = {}
 
+		self.romgadgets = {}
+		self.gadgetdropdown_w = None
+
 		# updater settings
 		self.auto_check_updates = tk.BooleanVar()
 		self.auto_check_updates.set(True)
@@ -135,8 +138,6 @@ Do you want to continue?\
 		Runs necessary commands before calling the main function.
 		"""
 
-		# TODO: add more commands here
-
 		self.updates_checked = False
 
 		if self.auto_check_updates.get():
@@ -144,10 +145,19 @@ Do you want to continue?\
 		else:
 			self.updates_checked = True
 
-		ttk.Label(text = 'Gadget list\n', font = self.bold_font).pack()
+		ttk.Label(text = 'PyU8ROP\n', font = self.bold_font).pack()
+
+		addmenu = tk.Menu()
+		addmenu.add_command(label = 'Address', command = self.add_gadget)
+		addmenu.add_command(label = 'Popped WORD', command = lambda: self.add_gadget('pop', [None]*2))
+		addmenu.add_command(label = 'Popped DWORD', command = lambda: self.add_gadget('pop', [None]*4))
+		addmenu.add_command(label = 'Popped QWORD', command = lambda: self.add_gadget('pop', [None]*8))
 
 		buttonframe = FocusFrame()
-		ttk.Button(buttonframe, text = 'Add gadget', command = self.add_gadget).pack(side = 'left')
+		addbtn = ttk.Button(buttonframe, text = 'Add gadget')
+		addbtn['command'] = lambda: addmenu.post(addbtn.winfo_rootx(), addbtn.winfo_rooty() + addbtn.winfo_height())
+		addbtn.pack(side = 'left')
+
 		self.clearbutton = ttk.Button(buttonframe, text = 'Delete all gadgets', command = self.clear_all, state = 'disabled'); self.clearbutton.pack(side = 'left')
 		buttonframe.pack()
 
@@ -158,7 +168,7 @@ Do you want to continue?\
 
 	def add_gadget(self, type_ = 'address', data = None):
 		if type_ == 'address': wclass = Address
-		#elif type_ == 'pop': wclass = Pop
+		elif type_ == 'pop': wclass = Pop
 		else:
 			self.n_a()
 			return
@@ -170,9 +180,9 @@ Do you want to continue?\
 		self.gadgets[idx] = {'type': type_, 'data': data, 'widget': widget}
 		widget.pack(fill = 'x')
 
-	def clear_all(self):
-		if tk.messagebox.askyesno('Warning', 'Are you sure you want to delete all gadgets?', icon = 'warning'):
-			for j in [i['widget'] for i in self.gadgets.values()]: j.destroy()
+	def clear_all(self, confirm = True):
+		if confirm and not tk.messagebox.askyesno('Warning', 'Are you sure you want to delete all gadgets?', icon = 'warning'): return
+		for j in [i['widget'] for i in self.gadgets.values()]: j.destroy()
 
 	@staticmethod
 	def validate_hex(new_char, new_str, act_code, rang = None, spaces = False):
@@ -196,11 +206,74 @@ Do you want to continue?\
 
 	def open(self):
 		f = tk.filedialog.askopenfile(mode = 'rb', filetypes = [('All Files', '*.*'), ('Binary Files', '*.bin')], defaultextension = '.bin')
-		if f is not None:
-			bytecode = f.read()
-			for i in range(0, len(bytecode), 4):
-				data = int.from_bytes(bytecode[i:i+4], 'little')
-				self.add_gadget(data = data & 0xffffe)
+		if f is None: return
+
+		self.clear_all(False)
+
+		bytecode = f.read()
+		for i in range(0, len(bytecode), 4):
+			data = int.from_bytes(bytecode[i:i+4], 'little')
+			self.add_gadget(data = data & 0xffffe)
+		f.close()
+
+	@staticmethod
+	def process_name(name):
+		tags = re.findall(r'{([^}]+)}', name)
+
+		result = {'name': re.sub(r'{.*?}', '', name), 'pop': [], 'tags': [], 'warning': ''}
+		name_index = name.index(result['name'])
+
+		if tags and all([name.find(f'{{{tag}}}') < name_index for tag in tags]):
+			for tag in tags:
+				if tag.startswith('warning'):
+					warning_content = tag.split(' ', 1)[1]
+					result['warning'] = warning_content
+				else: result['tags'].append(tag)
+
+		n = name.lower().split(',')
+		for m in n:
+			if m == 'rt': result['tags'].append('rt')
+			if m.startswith('pop'):
+				o = m.split()
+				for p in o:
+					if p == 'ea': result['pop'].append(2)
+					elif p == 'lr': result['pop'].append(1)
+					elif p == 'psw' or p.startswith('r') or p.startswith('er'): result['pop'].append(2)
+					elif p.startswith('xr'): result['pop'].append(4)
+					elif p.startswith('qr'): result['pop'].append(8)
+
+		return result
+
+	def load_gadgets(self):
+		fname = tk.filedialog.askopenfilename(filetypes = [('All Files', '*.*')])
+		if not fname: return
+
+		f = open(fname, encoding = 'utf-8')
+
+		gadget_data = []
+		gs = f.readlines()
+		f.close()
+
+		si = [i for i, x in enumerate(gs) if x == "/*\n"]
+		ei = [i for i, x in enumerate(gs) if x == "*/\n"]
+		for sidx, eidx in zip(si[::-1], ei[::-1]):
+			del gs[sidx:eidx + 1]
+			gs.remove("/*\n")
+			gs.remove("*/\n")
+
+		gdata = [re.split(r'\t', g.strip().split('#', 1)[0].strip()) for g in gs]
+		gadget_data.extend(list(filter((['']).__ne__, gdata)))
+
+		for data in gadget_data:
+			if len(data) < 2: continue
+			try:
+				addr = int(data[0], 16)
+				if addr in self.romgadgets: logging.warning(f'Duplicate gadget definition {addr:05X}, skipping')
+				else: self.romgadgets[addr] = self.process_name(data[1])
+			except ValueError: logging.warning(f'Invalid gadget definition {addr:05X}, skipping')
+
+		self.gadgetdropdown_w = max([10+len(v["name"]) for v in self.romgadgets.values()])
+		tk.messagebox.showinfo('Load ROM gadget list', 'Done! You can now use the dropdowns in the address gadgets.')
 
 	def auto_update(self):
 		self.update_thread = ThreadWithResult(target=self.UpdaterGUI.updater.check_updates, args=(True,))
@@ -316,6 +389,8 @@ Do you want to continue?\
 		self.window.bind('<F12>', self.version_details)
 		self.window.bind('<Control-O>', lambda x: self.open())
 		self.window.bind('<Control-o>', lambda x: self.open())
+		self.window.bind('<Control-G>', lambda x: self.load_gadgets())
+		self.window.bind('<Control-g>', lambda x: self.load_gadgets())
 		self.window.option_add('*tearOff', False)
 		self.set_title()
 		# TODO: uncomment this when you actually have an icon.ico/xbm file
@@ -414,6 +489,7 @@ Architecture: {platform.machine()}{dnl + "Settings file is saved to working dire
 		file_menu.add_command(label = 'Save as...', accelerator = 'Ctrl+Shift+S', state = 'disabled')
 		file_menu.add_separator()
 		file_menu.add_command(label = 'Load ROM', accelerator = 'Ctrl+L', state = 'disabled')
+		file_menu.add_command(label = 'Load ROM gadget list', accelerator = 'Ctrl+G', command = self.load_gadgets)
 		file_menu.add_separator()
 		file_menu.add_command(label = 'Exit', command = self.quit)
 		menubar.add_cascade(label='File', menu=file_menu)
@@ -824,8 +900,8 @@ class Address(FocusFrame):
 
 		vcmd = self.register(self.gui.validate_hex)
 
-		self.pc = ttk.Entry(self, width = 6, justify = 'right', validate = 'key', validatecommand = (vcmd, '%S', '%P', '%d', range(0, 0x10000, 2)))
-		if data is not None: self.pc.insert(0, f'{data & 0xfffe:04X}')
+		self.pc = ttk.Entry(self, width = 6, justify = 'right', validate = 'key', validatecommand = (vcmd, '%S', '%P', '%d', range(0x10000)))
+		if data is not None: self.pc.insert(0, f'{data & 0xffff:04X}')
 		self.pc.bind('<KeyPress>', self.cap_input)
 		self.pc.pack(side = 'right')
 
@@ -836,16 +912,43 @@ class Address(FocusFrame):
 		self.csr.bind('<KeyPress>', self.cap_input)
 		self.csr.pack(side = 'right')
 
-		self.bind('<FocusOut>', self.pad)
+		ttk.Label(self, text = ' ').pack(side = 'right')
+		self.dropdown_var = tk.StringVar(value = 'Undefined')
+		self.dropdown = ttk.Combobox(self, values = ['Undefined'], state = 'readonly', width = self.gui.gadgetdropdown_w, textvariable = self.dropdown_var, postcommand = self.add_values)
+		self.dropdown.bind('<<ComboboxSelected>>', self.update_csrpc)
+		self.dropdown.pack(side = 'right')
+
+		if data: self.focusout()
+		self.bind('<FocusOut>', self.focusout)
 
 	def cap_input(self, event):
 		if event.char.lower() in '0123456789abcdef':
 			event.widget.insert('end', event.char.upper())
 			return 'break'
 
-	def pad(self, event):
+	def focusout(self, event = None):
 		self.pc.insert(0, '0'*(4-len(self.pc.get())))
 		if len(self.csr.get()) == 0: self.csr.insert(0, '0')
+
+		self.add_values()
+
+		l = [i for i in self.dropdown['values'] if i.startswith(f'{self.csr.get()}:{self.pc.get()}H - ')]
+		self.dropdown_var.set(l[0] if len(l) == 1 else 'Undefined')
+
+	def add_values(self):
+		if len(self.dropdown['values']) == 1 and len(self.gui.romgadgets) > 0:
+			self.dropdown['values'] = ['Undefined'] + [f'{k >> 16:X}:{k & 0xffff:04X}H - {v["name"]}' for k, v in self.gui.romgadgets.items()]
+			if self.gui.gadgetdropdown_w is None: self.dropdown['width'] = max([10+len(v["name"]) for v in self.gui.romgadgets.values()])
+
+	def update_csrpc(self, event):
+		gadget = self.dropdown_var.get()
+		if gadget == 'Undefined': return
+
+		self.csr.delete(0, 'end')
+		self.pc.delete(0, 'end')
+
+		self.csr.insert('end', gadget[0])
+		self.pc.insert('end', gadget[2:6])
 
 	def destroy_confirm(self):
 		if tk.messagebox.askyesno('Warning', 'Are you sure you want to delete this gadget?', icon = 'warning'): self.destroy()
@@ -854,6 +957,58 @@ class Address(FocusFrame):
 		del self.gui.gadgets[self.index]
 		if len(self.gui.gadgets) == 0: self.gui.clearbutton['state'] = 'disabled'
 		super().destroy()
+
+class Pop(FocusFrame):
+	sizenames = {2: "", 4: "D", 8: "Q"}
+
+	def __init__(self, master, gui, index, data, **kw):
+		tk.Frame.__init__(self, master, **kw)
+		self.gui = gui
+		self.index = index
+
+		self.size = len(data)
+
+		ttk.Label(self, text = f'Popped {self.sizenames[self.size]}WORD').pack(side = 'left')
+
+		ttk.Button(self, text = 'X', width = 2, command = self.destroy_confirm).pack(side = 'right')
+		ttk.Label(self, text = '   ').pack(side = 'right')
+
+		vcmd = self.register(self.gui.validate_hex)
+
+		if self.size == 2:
+			ttk.Label(self, text = 'H').pack(side = 'right')
+			self.word = ttk.Entry(self, width = 6, justify = 'right', validate = 'key', validatecommand = (vcmd, '%S', '%P', '%d', range(0x10000)))
+			if data[0] != None and data[1] != None: self.word.insert(0, f'{((data[1] << 8) & 0xff) + (data[0] & 0xff):04X}')
+			self.word.bind('<KeyPress>', self.cap_input)
+			self.word.pack(side = 'right')
+		else:
+			self.bytes = [ttk.Entry(self, width = 2, justify = 'right', validate = 'key', validatecommand = (vcmd, '%S', '%P', '%d', range(0x100))) for i in range(self.size)]
+			for i in range(self.size - 1, -1, -1):
+				if data[i] is not None: self.bytes[i].insert(0, f'{data[i]:02X}')
+				self.bytes[i].bind('<KeyPress>', self.cap_input)
+				self.bytes[i].pack(side = 'right')
+
+		if data != [None]*self.size: self.focusout()
+		self.bind('<FocusOut>', self.focusout)
+
+	def cap_input(self, event):
+		if event.char.lower() in '0123456789abcdef':
+			event.widget.insert('end', event.char.upper())
+			return 'break'
+
+	def focusout(self, event = None):
+		if self.size == 2: self.word.insert(0, '0'*(2-len(self.word.get())))
+		else:
+			for w in self.bytes: w.insert(0, '0'*(2-len(w.get())))
+
+	def destroy_confirm(self):
+		if tk.messagebox.askyesno('Warning', 'Are you sure you want to delete this gadget?', icon = 'warning'): self.destroy()
+
+	def destroy(self):
+		del self.gui.gadgets[self.index]
+		if len(self.gui.gadgets) == 0: self.gui.clearbutton['state'] = 'disabled'
+		super().destroy()
+
 
 # https://stackoverflow.com/a/65447493
 class ThreadWithResult(threading.Thread):
